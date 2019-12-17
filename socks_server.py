@@ -16,7 +16,7 @@ from signal import signal, SIGINT, SIGTERM
 from time import sleep
 import sys
 # custom codes
-from my_socks import Socks5
+from socks_base import Socks5
 
 #
 # Configuration
