@@ -3,7 +3,7 @@
 from distutils.core import setup, Extension
 
 module1 = Extension('MyEncrypt',
-                    sources = ['en2.c'],
+                    sources = ['encrypt.c'],
                     libraries = ['crypto']
                     )
 
