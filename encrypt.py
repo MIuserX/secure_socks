@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # encoding: utf-8
 
 import struct
@@ -26,7 +25,7 @@ class MyEncrypt(object):
         #进行加密算法，模式ECB模式，把叠加完16位的秘钥传进来
         self.aes = AES.new(pad_key(key), AES.MODE_ECB)
     
-    def encrypt(self, bytes_data):
+    def encrypt1(self, bytes_data):
         len_ = struct.pack("i", len(bytes_data))
         return self.aes.encrypt(pad(len_ + bytes_data))
 
@@ -35,17 +34,24 @@ class MyEncrypt(object):
         len_ = (struct.unpack("i", data_packet[0:4]))[0]
         return data_packet[4:len_+4]
 
+    def encrypt(self, bytes_data):
+        src_len = struct.pack("i", len(bytes_data))
+        en_data = self.aes.encrypt(pad(src_len + bytes_data))
+        return struct.pack("i", len(en_data)) + en_data
+        
 
 if __name__ == '__main__':
-    xstr = 'fasfdsahf wqer qasdl是的骄傲去玩儿人w'
-    print("lenof(x)=" + str(len(xstr)))
-    
+    xstr = '骄傲去玩儿人'
+    bstr = xstr.encode(encoding="utf-8")
+    print("lenof(bytes)=" + str(len(bstr)))
+
     my_encrypt = MyEncrypt(b'abcdefgh')
     
-    en_ = my_encrypt.encrypt(xstr)
+    en_ = my_encrypt.encrypt(bstr)
     print("lenof(en)=" + str(len(en_)))
 
-    de_ = my_encrypt.decrypt(en_)
-    print("lenof(de)=" + str(len(de_)))
-    print("de=" + de_ + "=")
-    
+    de_len = (struct.unpack("i", en_[0:4]))[0]
+    de_ = my_encrypt.decrypt(en_[4:])
+
+    print("lenof(de)=" + str(de_len))
+    print("de=" + (de_.decode(encoding="utf-8"))[0:de_len] + "=")

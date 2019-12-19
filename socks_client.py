@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 """
  Small Socks5 Proxy Server in Python
@@ -17,6 +16,9 @@ from time import sleep
 import sys
 # custom codes
 from socks_base import Socks5
+from socks_base import SSocks
+from encrypt import MyEncrypt
+import struct
 
 #
 # Configuration
@@ -54,6 +56,11 @@ ATYP_IPV4 = b'\x01'
 ATYP_DOMAINNAME = b'\x03'
 
 
+
+encrypter = MyEncrypt(b'abcdefgh')
+
+
+
 class ExitStatus:
     """ Manage exit status """
     def __init__(self):
@@ -77,8 +84,11 @@ def error(msg="", err=None):
         traceback.print_exc()
 
 
-def proxy_loop(socket_src, socket_dst):
+def proxy_loop_of_client(socket_src, socket_dst):
     """ Wait for network activity """
+    sendlen = -1
+    sendbuff = None
+
     while not EXIT.get_status():
         try:
             reader, _, _ = select.select([socket_src, socket_dst], [], [], 1)
@@ -93,9 +103,28 @@ def proxy_loop(socket_src, socket_dst):
                 if not data:
                     return
                 if sock is socket_dst:
-                    socket_src.send(data)
+                    #### 来源于 Sserver 的密文，接收完整后，解密发给 client
+                    if sendlen == -1:
+                        # -1: buff无数据，等待数据
+                        sendlen = (struct.unpack("i", data[0:4]))[0]
+                        sendbuff = data[4:]
+                        sendlen -= (len(data) - 4)                        
+                    elif sendlen > 0:
+                        # > 0: buff有数据，但不是完整的密文，需要继续读取数据
+                        sendbuff += data
+                        sendlen -= len(data)
+
+                    if sendlen == 0:
+                        # 0: buff数据已足够，执行发送
+                        socket_src.send(encrypter.decrypt(sendbuff))
+                        sendbuff = None
+                        sendlen = -1
+                    elif sendlen < -1:
+                        raise Exception("sendlen < -1")
                 else:
-                    socket_dst.send(data)
+                    #### 来源于 client 的明文，直接加密发给 Sserver 
+                    socket_dst.send(encrypter.encrypt(data))
+
         except socket.error as err:
             error("Loop failed", err)
             return
@@ -107,13 +136,17 @@ def connect_to_vps_over_socks5_proxy(proxy_addr, proxy_port, vps_addr, vps_port,
     try:
         sock_to_proxy.connect((proxy_addr, proxy_port))
 
-        #### handshack
+        # 第一阶段很简单，
+        # 就是连接上一级 socks5 proxy，
+        # 并打通到 vps 的链接，
+
+        # handshack
         sock_to_proxy.send(Socks5.simple_hello)
         if not Socks5.is_noauth_reply(sock_to_proxy.recv(BUFSIZE)):
             error("Failed to handshack with proxy", Exception("Bad handshack"))
             return 0
 
-        #### send addr
+        # send addr
         sock_to_proxy.send(Socks5.addr_packet(ip=vps_addr, port=vps_port))
         if not Socks5.is_connection_ok(sock_to_proxy.recv(BUFSIZE)):
             error("Failed to connect vps", Exception("Bad connection"))
@@ -121,21 +154,22 @@ def connect_to_vps_over_socks5_proxy(proxy_addr, proxy_port, vps_addr, vps_port,
 
         print("connection to proxy OK")
 
-        # 在这个阶段我方已与 socks5 proxy 建立了连接，
+        # 现在这个阶段我方已与 socks5 proxy 建立了连接，
         # socks5 proxy 也与 vps 建立了连接，
-        # 现在与
+        # 接下来要与 vps 进行加密认证，并连接上实际的
 
-        #### handshack
-        sock_to_proxy.send(Socks5.simple_hello)
-        if not Socks5.is_noauth_reply(sock_to_proxy.recv(BUFSIZE)):
-            error("Failed to handshack with proxy", Exception("Bad handshack"))
-            return 0
-
-        #### send addr
-        sock_to_proxy.send(Socks5.addr_packet(dst_data))
-        if not Socks5.is_connection_ok(sock_to_proxy.recv(BUFSIZE)):
-            error("Failed to connect vps", Exception("Bad connection"))
-            return 0
+        ## handshack
+        #sock_to_proxy.send(encrypter.encrypt(Socks5.simple_hello))
+        #if not Socks5.is_noauth_reply(encrypter.decrypt(sock_to_proxy.recv(BUFSIZE))):
+        #    error("Failed to handshack with vps", Exception("Bad handshack"))
+        #    return 0
+#
+        ## send addr
+        #sock_to_proxy.send(encrypter.encrypt(Socks5.addr_packet(dst_data)))
+        #if not Socks5.is_connection_ok(encrypter.decrypt(sock_to_proxy.recv(BUFSIZE))):
+        #    error("Failed to connect target", Exception("Bad connection"))
+        #    return 0
+        SSocks.hello_to_server(sock_to_proxy, encrypter, dst_data)
 
         print("connection to vps OK")
 
@@ -225,42 +259,42 @@ def get_dst(wrapper):
     return False
 
 
-def request_client(wrapper):
-    """ Client request details """
-    # +----+-----+-------+------+----------+----------+
-    # |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
-    # +----+-----+-------+------+----------+----------+
-    try:
-        s5_request = wrapper.recv(BUFSIZE)
-    except ConnectionResetError:
-        if wrapper != 0:
-            wrapper.close()
-        error()
-        return False
-    # Check VER, CMD and RSV
-    if (
-            s5_request[0:1] != VER or
-            s5_request[1:2] != CMD_CONNECT or
-            s5_request[2:3] != b'\x00'
-    ):
-        return False
-    # IPV4
-    if s5_request[3:4] == ATYP_IPV4:
-        dst_addr = socket.inet_ntoa(s5_request[4:-2])
-        dst_port = unpack('>H', s5_request[8:len(s5_request)])[0]
-    # DOMAIN NAME
-    elif s5_request[3:4] == ATYP_DOMAINNAME:
-        sz_domain_name = s5_request[4]
-        dst_addr = s5_request[5: 5 + sz_domain_name - len(s5_request)]
-        port_to_unpack = s5_request[5 + sz_domain_name:len(s5_request)]
-        dst_port = unpack('>H', port_to_unpack)[0]
-    else:
-        return False
-
-    #dst_addr = "127.0.0.1"
-    #dst_port = 1080
-    print("dst_addr={} dst_port={}".format(dst_addr, str(dst_port)))
-    return (dst_addr, dst_port)
+#def request_client(wrapper):
+#    """ Client request details """
+#    # +----+-----+-------+------+----------+----------+
+#    # |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+#    # +----+-----+-------+------+----------+----------+
+#    try:
+#        s5_request = wrapper.recv(BUFSIZE)
+#    except ConnectionResetError:
+#        if wrapper != 0:
+#            wrapper.close()
+#        error()
+#        return False
+#    # Check VER, CMD and RSV
+#    if (
+#            s5_request[0:1] != VER or
+#            s5_request[1:2] != CMD_CONNECT or
+#            s5_request[2:3] != b'\x00'
+#    ):
+#        return False
+#    # IPV4
+#    if s5_request[3:4] == ATYP_IPV4:
+#        dst_addr = socket.inet_ntoa(s5_request[4:-2])
+#        dst_port = unpack('>H', s5_request[8:len(s5_request)])[0]
+#    # DOMAIN NAME
+#    elif s5_request[3:4] == ATYP_DOMAINNAME:
+#        sz_domain_name = s5_request[4]
+#        dst_addr = s5_request[5: 5 + sz_domain_name - len(s5_request)]
+#        port_to_unpack = s5_request[5 + sz_domain_name:len(s5_request)]
+#        dst_port = unpack('>H', port_to_unpack)[0]
+#    else:
+#        return False
+#
+#    #dst_addr = "127.0.0.1"
+#    #dst_port = 1080
+#    print("dst_addr={} dst_port={}".format(dst_addr, str(dst_port)))
+#    return (dst_addr, dst_port)
 
 
 def request(wrapper):
@@ -282,7 +316,7 @@ def request(wrapper):
     if dst:
         #socket_dst = connect_to_dst(dst[0], dst[1])
         #socket_dst = connect_to_socks5_proxy("127.0.0.1", 1080, dst[0], dst[1])
-        socket_dst = connect_to_vps_over_socks5_proxy("127.0.0.1", 1080, "100.80.168.20", 1080, dst)
+        socket_dst = connect_to_vps_over_socks5_proxy("127.0.0.1", 1080, "100.80.129.81", 9051, dst)
     if not dst or socket_dst == 0:
         rep = b'\x01'
     else:
@@ -298,7 +332,7 @@ def request(wrapper):
         return
     # start proxy
     if rep == b'\x00':
-        proxy_loop(wrapper, socket_dst)
+        proxy_loop_of_client(wrapper, socket_dst)
     if wrapper != 0:
         wrapper.close()
     if socket_dst != 0:
@@ -431,5 +465,3 @@ def main():
 EXIT = ExitStatus()
 if __name__ == '__main__':
     main()
-    #sock = connect_to_vps_over_socks5_proxy("127.0.0.1", 1080)
-    #sock.close()

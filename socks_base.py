@@ -49,3 +49,39 @@ class Socks5(object):
             ip_x = ip.split(".")
             cooked_ip = struct.pack("<BBBB", int(ip_x[0]), int(ip_x[1]), int(ip_x[2]), int(ip_x[3]))
             return prefix + b'\x01' + cooked_ip + struct.pack(">H", port)
+
+
+    @staticmethod
+    def hello_to_server(sock, dst_addr, dst_port):
+        
+
+
+class SSocks(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def hello_to_server(sock, encrypter, dst):
+        try:
+            # handshack
+            sock.send(encrypter.encrypt(Socks5.simple_hello))
+            reply = sock.recv(1024)
+            en_len = (struct.unpack("i", reply[0:4]))[0]
+            origin_data = encrypter.decrypt(reply[4:])
+            if not Socks5.is_noauth_reply(origin_data):
+                raise Exception("Failed to handshack with vps")
+    
+            # send addr
+            sock.send(encrypter.encrypt(Socks5.addr_packet(dst)))
+            reply = sock.recv(1024)
+            en_len = (struct.unpack("i", reply[0:4]))[0]
+            origin_data = encrypter.decrypt(reply[4:])
+            if not Socks5.is_connection_ok(origin_data):
+                raise Exception("Failed to connect target")
+        except Exception as e:
+            raise e
+
+    @staticmethod
+    def accept_hello(sock, encrypter):
+        pass
