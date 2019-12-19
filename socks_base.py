@@ -3,6 +3,8 @@
 import socket
 import struct
 
+BUFSIZE=1024
+
 class Socks5(object):
     
     simple_hello = b'\x05' + b'\x01' b'\x00'
@@ -50,10 +52,24 @@ class Socks5(object):
             cooked_ip = struct.pack("<BBBB", int(ip_x[0]), int(ip_x[1]), int(ip_x[2]), int(ip_x[3]))
             return prefix + b'\x01' + cooked_ip + struct.pack(">H", port)
 
-
     @staticmethod
     def hello_to_server(sock, dst_addr, dst_port):
-        
+        """
+        shanck hands with socks5 server and connect to target
+        """
+
+        try:
+            # handshack
+            sock.send(Socks5.simple_hello)
+            if not Socks5.is_noauth_reply(sock_to_proxy.recv(BUFSIZE)):
+                raise Exception("Failed to handshack with proxy")
+
+            # send addr
+            sock.send(Socks5.addr_packet(ip=vps_addr, port=vps_port))
+            if not Socks5.is_connection_ok(sock_to_proxy.recv(BUFSIZE)):
+                raise Exception("Failed to connect target")
+        except Exception as e:
+            raise e
 
 
 class SSocks(object):
@@ -66,7 +82,7 @@ class SSocks(object):
         try:
             # handshack
             sock.send(encrypter.encrypt(Socks5.simple_hello))
-            reply = sock.recv(1024)
+            reply = sock.recv(BUFSIZE)
             en_len = (struct.unpack("i", reply[0:4]))[0]
             origin_data = encrypter.decrypt(reply[4:])
             if not Socks5.is_noauth_reply(origin_data):
@@ -74,7 +90,7 @@ class SSocks(object):
     
             # send addr
             sock.send(encrypter.encrypt(Socks5.addr_packet(dst)))
-            reply = sock.recv(1024)
+            reply = sock.recv(BUFSIZE)
             en_len = (struct.unpack("i", reply[0:4]))[0]
             origin_data = encrypter.decrypt(reply[4:])
             if not Socks5.is_connection_ok(origin_data):

@@ -140,38 +140,15 @@ def connect_to_vps_over_socks5_proxy(proxy_addr, proxy_port, vps_addr, vps_port,
         # 就是连接上一级 socks5 proxy，
         # 并打通到 vps 的链接，
 
-        # handshack
-        sock_to_proxy.send(Socks5.simple_hello)
-        if not Socks5.is_noauth_reply(sock_to_proxy.recv(BUFSIZE)):
-            error("Failed to handshack with proxy", Exception("Bad handshack"))
-            return 0
-
-        # send addr
-        sock_to_proxy.send(Socks5.addr_packet(ip=vps_addr, port=vps_port))
-        if not Socks5.is_connection_ok(sock_to_proxy.recv(BUFSIZE)):
-            error("Failed to connect vps", Exception("Bad connection"))
-            return 0
-
-        print("connection to proxy OK")
+        Socks5.hello_to_server(sock_to_proxy, vps_addr, vps_port)
+        print("connection to vps OK")
 
         # 现在这个阶段我方已与 socks5 proxy 建立了连接，
         # socks5 proxy 也与 vps 建立了连接，
         # 接下来要与 vps 进行加密认证，并连接上实际的
 
-        ## handshack
-        #sock_to_proxy.send(encrypter.encrypt(Socks5.simple_hello))
-        #if not Socks5.is_noauth_reply(encrypter.decrypt(sock_to_proxy.recv(BUFSIZE))):
-        #    error("Failed to handshack with vps", Exception("Bad handshack"))
-        #    return 0
-#
-        ## send addr
-        #sock_to_proxy.send(encrypter.encrypt(Socks5.addr_packet(dst_data)))
-        #if not Socks5.is_connection_ok(encrypter.decrypt(sock_to_proxy.recv(BUFSIZE))):
-        #    error("Failed to connect target", Exception("Bad connection"))
-        #    return 0
         SSocks.hello_to_server(sock_to_proxy, encrypter, dst_data)
-
-        print("connection to vps OK")
+        print("connection to target OK")
 
         return sock_to_proxy
     except socket.error as err:
