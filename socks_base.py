@@ -28,7 +28,8 @@ class Socks5(object):
 
     @staticmethod
     def is_connection_ok(reply):
-        if reply[0:1] == b'\x05' and\
+        if reply and\
+            reply[0:1] == b'\x05' and\
             reply[1:2] == b'\x00' and\
             reply[2:3] == b'\x00':
             return True
@@ -61,12 +62,12 @@ class Socks5(object):
         try:
             # handshack
             sock.send(Socks5.simple_hello)
-            if not Socks5.is_noauth_reply(sock_to_proxy.recv(BUFSIZE)):
+            if not Socks5.is_noauth_reply(sock.recv(BUFSIZE)):
                 raise Exception("Failed to handshack with proxy")
 
             # send addr
-            sock.send(Socks5.addr_packet(ip=vps_addr, port=vps_port))
-            if not Socks5.is_connection_ok(sock_to_proxy.recv(BUFSIZE)):
+            sock.send(Socks5.addr_packet(ip=dst_addr, port=dst_port))
+            if not Socks5.is_connection_ok(sock.recv(BUFSIZE)):
                 raise Exception("Failed to connect target")
         except Exception as e:
             raise e
