@@ -94,18 +94,28 @@ static PyObject *MyEncrypt_decrypt(PyObject *self, PyObject * args) {
 }
 
 
-static PyMethodDef DemoMethods[] = {
+// Module method table
+static PyMethodDef MyEncryptMethods[] = {
     {"encrypt", MyEncrypt_encrypt, METH_VARARGS, "encrypt data"},
     {"decrypt", MyEncrypt_decrypt, METH_VARARGS, "decrypt data"},
     {NULL, NULL, 0, NULL}
 };
 
 
-// module’s initialization function
-PyMODINIT_FUNC initMyEncrypt(void)
+// module structure
+static struct PyModuleDef MyEncryptModule = {
+    PyModuleDef_HEAD_INIT,
+    "MyEncrypt",
+    "a sample encryption tools",
+    -1,
+    MyEncryptMethods
+};
+
+
+PyMODINIT_FUNC PyInit_MyEncrypt(void)
 {
-    (void)Py_InitModule("MyEncrypt", DemoMethods);
-}
+    return PyModule_Create(&MyEncryptModule);
+};
 
 
 //int main(int argc, char **argv) {
