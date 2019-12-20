@@ -1,8 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
- Small Socks5 Proxy Server in Python
- from https://github.com/MisterDaneel/
-"""
 
 # Network
 import socket
@@ -17,6 +13,7 @@ import sys
 # custom codes
 from socks_base import Socks5
 from encrypt import MyEncrypt
+from common import Buffer
 import struct
 
 #
@@ -24,7 +21,7 @@ import struct
 #
 MAX_THREADS = 200
 BUFSIZE = 2048
-TIMEOUT_SOCKET = 5
+TIMEOUT_SOCKET = 30
 LOCAL_ADDR = '0.0.0.0'
 LOCAL_PORT = 9051
 # Parameter to bind a socket to a device, using SO_BINDTODEVICE
@@ -83,8 +80,9 @@ def error(msg="", err=None):
 
 def proxy_loop(socket_src, socket_dst):
     """ Wait for network activity """
-    sendlen = -1
-    sendbuff = None
+    buff_status = 1
+    buff = None
+    needlen = 0
 
     while not EXIT.get_status():
         try:
@@ -94,36 +92,86 @@ def proxy_loop(socket_src, socket_dst):
             error("Select failed", err)
             return
         if not reader:
+            #print("[ ] socket events is not read evnets")
             continue
         try:
             for sock in reader:
-                data = sock.recv(BUFSIZE)
-                if not data:
-                    return
-                if sock is socket_dst:
-                    #### 从 Internet 来的数据，要加密发给 client
-                    socket_src.send(encrypter.encrypt(data))
+                if sock is socket_src:
+                    print("[ ] Debug: sock is src")
+                    buffer = Buffer(sock.recv(BUFSIZE))
+                    while not buffer.is_empty(): 
+                        #### 从 client 来的数据，要解密发给 Internet
+                        print("[ ] info: process buffer")
+                        data = None
+                        if buff_status == 1:
+                            print("[ ] 1")
+                            data = buffer.pop(4)
+                            print("[ ] 1 after")
+                            if data:
+                                print("[ ] 1 : datalen=" + str(len(data)))
+                                buff = data[0:]
+                                if len(buff) == 4:
+                                    needlen = (struct.unpack("i", buff))[0]
+                                    print("[ ] 1 : get data len")
+                                    buff = None
+                                    buff_status = 3                                 
+                                elif len(buff) < 4:
+                                    buff_status = 2
+                            else:
+                                break
+                        elif buff_status == 2:
+                            print("[ ] 2")
+                            data = buffer.pop(4-len(buff))
+                            if data:
+                                print("[ ] 2 : datalen=" + str(len(data)))
+                                buff += data[0:]
+                                if len(buff) == 4:
+                                    needlen = (struct.unpack("i", buff))[0]
+                                    print("[ ] 2 : get data len")
+                                    buff = None
+                                    buff_status = 3                                 
+                            else:
+                                break   
+                        elif buff_status == 3:
+                            print("[ ] 3")
+                            data = buffer.pop(needlen)
+                            if data:
+                                print("[ ] 3 : datalen=" + str(len(data)))
+                                buff = data[0:]
+                                if len(buff) == needlen:
+                                    buff_status = 4
+                                    socket_dst.send(encrypter.decrypt(buff))
+                                    print("[ ] 3 : get data")
+                                    buff = None
+                                    needlen = 0
+                                    buff_status = 1
+                                elif len(buff) < needlen:
+                                    buff_status = 4
+                            else:
+                                break
+                        elif buff_status == 4:
+                            print("[ ] 4")
+                            data = buffer.pop(needlen-len(buff))
+                            if data:
+                                print("[ ] 4 : datalen=" + str(len(data)))
+                                buff += data[0:]
+                                if len(buff) == needlen:
+                                    socket_dst.send(encrypter.decrypt(buff))
+                                    print("[ ] 4 : get data")
+                                    buff = None
+                                    needlen = 0
+                                    buff_status = 1                              
+                            else:
+                                break
+                        else:
+                            raise Exception("buff_status error")
                 else:
-                    #### 从 client 来的数据，要解密发给 Internet
-                    if sendlen == -1:
-                        # -1: buff无数据，这是第一次获取数据，
-                        #     读取数据长度 和 数据
-                        sendlen = (struct.unpack("i", data[0:4]))[0]
-                        sendbuff = data[4:]
-                        sendlen -= (len(data) - 4)
-                    elif sendlen > 0:
-                        # > 0: buff有数据，但不是完整的密文，需要继续读取数据
-                        sendbuff += data
-                        sendlen -= len(data)
-
-                    if sendlen == 0:
-                        # 0: buff数据已足够，执行发送
-                        socket_dst.send(encrypter.decrypt(sendbuff))
-                        sendbuff = None
-                        sendlen = -1
-                    elif sendlen < -1:
-                        raise Exception("sendlen < -1")
-
+                    #### 从 Internet 来的数据，要加密发给 client
+                    print("[ ] Debug: sock is dst")
+                    buff = sock.recv(BUFSIZE)
+                    if buff:
+                        socket_src.send(encrypter.encrypt(buff))
+                    buff = None
         except socket.error as err:
             error("Loop failed", err)
             return

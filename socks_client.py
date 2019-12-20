@@ -18,6 +18,7 @@ import sys
 from socks_base import Socks5
 from socks_base import SSocks
 from encrypt import MyEncrypt
+from common import Buffer
 import struct
 
 #
@@ -25,7 +26,7 @@ import struct
 #
 MAX_THREADS = 200
 BUFSIZE = 2048
-TIMEOUT_SOCKET = 5
+TIMEOUT_SOCKET = 30
 LOCAL_ADDR = '0.0.0.0'
 LOCAL_PORT = 9050
 # Parameter to bind a socket to a device, using SO_BINDTODEVICE
@@ -86,8 +87,14 @@ def error(msg="", err=None):
 
 def proxy_loop_of_client(socket_src, socket_dst):
     """ Wait for network activity """
-    sendlen = -1
-    sendbuff = None
+
+    # 1: 未读数据
+    # 2: 等待data_len读取读取完成
+    # 3: 读取数据
+    # 4: 等待数据读取完成
+    buff_status = 1
+    buff = None
+    needlen = 0
 
     while not EXIT.get_status():
         try:
@@ -99,33 +106,71 @@ def proxy_loop_of_client(socket_src, socket_dst):
             continue
         try:
             for sock in reader:
-                data = sock.recv(BUFSIZE)
-                if not data:
-                    return
                 if sock is socket_dst:
-                    #### 来源于 Sserver 的密文，接收完整后，解密发给 client
-                    if sendlen == -1:
-                        # -1: buff无数据，等待数据
-                        sendlen = (struct.unpack("i", data[0:4]))[0]
-                        sendbuff = data[4:]
-                        sendlen -= (len(data) - 4)                        
-                    elif sendlen > 0:
-                        # > 0: buff有数据，但不是完整的密文，需要继续读取数据
-                        sendbuff += data
-                        sendlen -= len(data)
-
-                    if sendlen == 0:
-                        # 0: buff数据已足够，执行发送
-                        socket_src.send(encrypter.decrypt(sendbuff))
-                        sendbuff = None
-                        sendlen = -1
-                    elif sendlen < -1:
-                        raise Exception("sendlen < -1")
+                    buffer = Buffer(sock.recv(BUFSIZE))
+                    while not buffer.is_empty(): 
+                        #### 来源于 Sserver 的密文，接收完整后，解密发给 client
+                        data = None
+                        if buff_status == 1:
+                            data = buffer.pop(4)
+                            if data:
+                                buff = data[0:]
+                                if len(buff) == 4:
+                                    needlen = (struct.unpack("i", buff))[0]
+                                    buff = None
+                                    buff_status = 3                                 
+                                elif len(buff) < 4:
+                                    buff_status = 2
+                            else:
+                                break
+                        elif buff_status == 2:
+                            data = buffer.pop(4-len(buff))
+                            if data:
+                                buff += data[0:]
+                                if len(buff) == 4:
+                                    needlen = (struct.unpack("i", buff))[0]
+                                    buff = None
+                                    buff_status = 3
+                            else:
+                                break   
+                        elif buff_status == 3:
+                            data = buffer.pop(needlen)
+                            if data:
+                                buff = data[0:]
+                                if len(buff) == needlen:
+                                    buff_status = 4
+                                    socket_src.send(encrypter.decrypt(buff))
+                                    buff = None
+                                    needlen = 0
+                                    buff_status = 1
+                                elif len(buff) < needlen:
+                                    buff_status = 4
+                            else:
+                                break
+                        elif buff_status == 4:
+                            data = buffer.pop(needlen-len(buff))
+                            if data:
+                                buff += data[0:]
+                                if len(buff) == needlen:
+                                    socket_src.send(encrypter.decrypt(buff))
+                                    buff = None
+                                    needlen = 0
+                                    buff_status = 1                               
+                            else:
+                                break
+                        else:
+                            raise Exception("buff_status error")
                 else:
-                    #### 来源于 client 的明文，直接加密发给 Sserver 
-                    socket_dst.send(encrypter.encrypt(data))
-
+                    #### 来源于 client 的明文，直接加密发给 Sserver
+                    buff = sock.recv(BUFSIZE)
+                    if buff:
+                        socket_dst.send(encrypter.encrypt(buff))
+                    buff = None
+    
         except socket.error as err:
+            error("Loop failed", err)
+            return
+        except Exception as e:
             error("Loop failed", err)
             return
 
