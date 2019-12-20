@@ -19,6 +19,6 @@ class Buffer(object):
         return rt
 
     def is_empty(self):
-        if (not self.data) or self.__idx >= self.__len:
+        if (not self.__data) or self.__idx >= self.__len:
             return True
         return False
